@@ -3,6 +3,20 @@ import pkgutil
 import inspect
 import websockets
 import globals
+import sys
+import os
+
+
+def get_plugins_path():
+    """获取 plugins 目录路径（兼容打包后的环境）"""
+    if getattr(sys, 'frozen', False):
+        # 打包后的环境
+        application_path = os.path.dirname(sys.executable)
+    else:
+        # 开发环境
+        application_path = os.path.dirname(os.path.abspath(__file__))
+    
+    return os.path.join(application_path, 'plugins')
 
 
 class PluginBotWrapper:
@@ -134,6 +148,13 @@ class PluginManager:
     def load_all_plugins(self):
         """加载 plugins 目录下的所有插件"""
         try:
+            # 动态导入 plugins 包
+            plugins_path = get_plugins_path()
+            
+            # 将 plugins 目录添加到 sys.path
+            if plugins_path not in sys.path:
+                sys.path.insert(0, os.path.dirname(plugins_path))
+            
             import plugins
             
             # 遍历 plugins 包中的所有模块
@@ -176,6 +197,10 @@ class PluginManager:
                 
                 # 获取插件信息
                 plugin_name = getattr(plugin_instance, 'name', plugin_key)
+                # 更新包装器中的插件名为实际名称
+                plugin_bot_wrapper._plugin_name = plugin_name
+                plugin_bot_wrapper.Logger.plugin_name = plugin_name
+                
                 plugin_info = {
                     'name': plugin_name,
                     'description': getattr(plugin_instance, 'description', '暂无描述'),

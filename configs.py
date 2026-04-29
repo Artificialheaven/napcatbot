@@ -1,5 +1,17 @@
 import json
 import os
+import sys
+
+
+def get_application_path():
+    """获取应用程序路径（兼容打包后的环境）"""
+    if getattr(sys, 'frozen', False):
+        # 打包后的环境
+        return os.path.dirname(sys.executable)
+    else:
+        # 开发环境
+        return os.path.dirname(os.path.abspath(__file__))
+
 
 # 默认配置
 default_config = {
@@ -8,8 +20,9 @@ default_config = {
     "token": ""
 }
 
-# 配置文件路径
-config_file = 'config.json'
+# 配置文件路径（使用绝对路径，兼容打包环境）
+app_path = get_application_path()
+config_file = os.path.join(app_path, 'config.json')
 
 # 全局配置字典
 conf = {}
