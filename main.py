@@ -83,6 +83,7 @@ async def start():
 
 
 if __name__ == "__main__":
+    print("DearQQ启动中...")
     keep_loop = True
 
     ui = main_ui.UI()
