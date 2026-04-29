@@ -5,6 +5,7 @@ import websockets
 import globals
 import sys
 import os
+import subprocess
 
 
 def get_plugins_path():
@@ -17,6 +18,121 @@ def get_plugins_path():
         application_path = os.path.dirname(os.path.abspath(__file__))
     
     return os.path.join(application_path, 'plugins')
+
+
+def find_python_interpreter():
+    """查找系统中的 Python 解释器"""
+    # 优先使用当前运行的 Python
+    python_exe = sys.executable
+    
+    # 验证是否可用
+    try:
+        result = subprocess.run(
+            [python_exe, '--version'],
+            capture_output=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            print(f"找到 Python 解释器: {python_exe}")
+            return python_exe
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        pass
+    
+    # 尝试其他常见路径
+    python_paths = [
+        'python',
+        'python3',
+        'py',
+    ]
+    
+    if sys.platform == 'win32':
+        python_paths.extend([
+            'C:/Python39/python.exe',
+            'C:/Python310/python.exe',
+            'C:/Python311/python.exe',
+            'C:/Python312/python.exe',
+        ])
+    
+    for python_path in python_paths:
+        try:
+            result = subprocess.run(
+                [python_path, '--version'],
+                capture_output=True,
+                timeout=5
+            )
+            if result.returncode == 0:
+                print(f"找到 Python 解释器: {python_path}")
+                return python_path
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+    
+    return None
+
+
+def install_requirements(requirements_file: str, plugin_name: str) -> bool:
+    """
+    安装 requirements.txt 中的依赖
+    
+    :param requirements_file: requirements.txt 文件路径
+    :param plugin_name: 插件名称（用于日志）
+    :return: 是否安装成功
+    """
+    if not os.path.exists(requirements_file):
+        return True  # 没有 requirements 文件，视为成功
+    
+    print(f"[{plugin_name}] 检测到 requirements.txt，开始安装依赖...")
+    
+    # 查找 Python 解释器
+    python_exe = find_python_interpreter()
+    if not python_exe:
+        print(f"[{plugin_name}] 错误: 未找到 Python 解释器，无法安装依赖")
+        return False
+    
+    try:
+        # 读取 requirements.txt 内容
+        with open(requirements_file, 'r', encoding='utf-8') as f:
+            requirements = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        
+        if not requirements:
+            print(f"[{plugin_name}] requirements.txt 为空，跳过安装")
+            return True
+        
+        print(f"[{plugin_name}] 需要安装的依赖: {', '.join(requirements)}")
+        
+        # 使用 pip 安装依赖
+        cmd = [
+            python_exe,
+            '-m', 'pip', 'install',
+            *requirements,
+            '--quiet',
+            '--disable-pip-version-check'
+        ]
+        
+        print(f"[{plugin_name}] 正在安装依赖...")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=300  # 5分钟超时
+        )
+        
+        if result.returncode == 0:
+            print(f"[{plugin_name}] 依赖安装成功")
+            return True
+        else:
+            print(f"[{plugin_name}] 依赖安装失败:")
+            print(f"  stdout: {result.stdout}")
+            print(f"  stderr: {result.stderr}")
+            return False
+            
+    except subprocess.TimeoutExpired:
+        print(f"[{plugin_name}] 依赖安装超时（超过5分钟）")
+        return False
+    except Exception as e:
+        print(f"[{plugin_name}] 安装依赖时出错: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
 
 
 class PluginBotWrapper:
@@ -146,28 +262,28 @@ class PluginManager:
         self.event_handlers = {}
     
     def load_all_plugins(self):
-        """加载 plugins 目录下的所有插件"""
+        """加载 plugins 目录下的所有插件（基于文件夹）"""
         try:
-            # 动态导入 plugins 包
             plugins_path = get_plugins_path()
             
-            # 将 plugins 目录添加到 sys.path
-            if plugins_path not in sys.path:
-                sys.path.insert(0, os.path.dirname(plugins_path))
+            if not os.path.exists(plugins_path):
+                print(f"插件目录不存在: {plugins_path}")
+                return
             
-            import plugins
-            
-            # 遍历 plugins 包中的所有模块
-            for importer, modname, ispkg in pkgutil.iter_modules(plugins.__path__, plugins.__name__ + "."):
-                # 跳过 __pycache__ 和其他特殊目录
-                if '__pycache__' in modname:
+            # 遍历 plugins 目录下的所有子文件夹
+            for item in os.listdir(plugins_path):
+                item_path = os.path.join(plugins_path, item)
+                
+                # 跳过非目录、__pycache__、以下划线开头的目录
+                if not os.path.isdir(item_path):
                     continue
-                    
+                if item.startswith('__') or item.startswith('.'):
+                    continue
+                
                 try:
-                    self.load_plugin(modname)
-                    print(f"成功加载插件: {modname}")
+                    self.load_plugin_by_folder(item, plugins_path)
                 except Exception as e:
-                    print(f"加载插件 {modname} 失败: {e}")
+                    print(f"加载插件 {item} 失败: {e}")
                     import traceback
                     traceback.print_exc()
             
@@ -177,22 +293,181 @@ class PluginManager:
             import traceback
             traceback.print_exc()
     
-    def load_plugin(self, module_name: str):
-        """加载单个插件"""
-        # 导入模块
-        module = importlib.import_module(module_name)
+    def load_plugin_by_folder(self, folder_name: str, plugins_path: str):
+        """
+        通过文件夹加载插件
+        
+        :param folder_name: 插件文件夹名称（例如 hello）
+        :param plugins_path: plugins 目录路径
+        """
+        plugin_dir = os.path.join(plugins_path, folder_name)
+        main_file = os.path.join(plugin_dir, f"{folder_name}.py")
+        
+        # 检查主文件是否存在
+        if not os.path.exists(main_file):
+            print(f"[{folder_name}] 警告: 找不到主文件 {folder_name}.py，跳过")
+            return
+        
+        # 检查并安装依赖
+        requirements_file = os.path.join(plugin_dir, 'requirements.txt')
+        if os.path.exists(requirements_file):
+            print(f"[{folder_name}] 发现 requirements.txt")
+            success = install_requirements(requirements_file, folder_name)
+            
+            if not success:
+                print(f"[{folder_name}] 依赖安装失败，跳过此插件")
+                self.plugin_info[folder_name] = {
+                    'name': folder_name,
+                    'description': '依赖安装失败',
+                    'version': '未知',
+                    'enabled': False,
+                    'module_name': f"plugins.{folder_name}.{folder_name}",
+                    'error': '依赖安装失败，请查看控制台输出'
+                }
+                return
+        
+        # 确保插件目录有 __init__.py
+        init_file = os.path.join(plugin_dir, '__init__.py')
+        if not os.path.exists(init_file):
+            # 自动创建空的 __init__.py
+            try:
+                with open(init_file, 'w', encoding='utf-8') as f:
+                    f.write('# Auto-generated by plugin loader\n')
+                print(f"[{folder_name}] 已自动创建 __init__.py")
+            except Exception as e:
+                print(f"[{folder_name}] 创建 __init__.py 失败: {e}")
+                return
+        
+        # 将 plugins 目录添加到 sys.path（如果还没有）
+        if plugins_path not in sys.path:
+            sys.path.insert(0, plugins_path)
+        
+        # 导入模块：plugins.folder_name.folder_name
+        module_name = f"plugins.{folder_name}.{folder_name}"
+        
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError as e:
+            print(f"导入插件 {module_name} 失败: {e}")
+            self.plugin_info[folder_name] = {
+                'name': folder_name,
+                'description': '插件加载失败',
+                'version': '未知',
+                'enabled': False,
+                'module_name': module_name,
+                'error': f'导入失败: {str(e)}'
+            }
+            return
         
         # 查找模块中的 main 类
         for name, obj in inspect.getmembers(module):
             if name == 'main' and inspect.isclass(obj):
                 # 为插件创建专属的 Bot 包装器（自动注入插件名）
-                plugin_bot_wrapper = PluginBotWrapper(globals.bot_instance, module_name.split('.')[-1])
+                plugin_bot_wrapper = PluginBotWrapper(globals.bot_instance, folder_name)
                 
                 # 实例化插件（传入 websocket 和包装后的bot）
                 plugin_instance = obj(self.websocket, plugin_bot_wrapper)
                 
                 # 存储插件实例
-                plugin_key = module_name.split('.')[-1]
+                self.plugins[folder_name] = plugin_instance
+                
+                # 获取插件信息
+                plugin_name = getattr(plugin_instance, 'name', folder_name)
+                # 更新包装器中的插件名为实际名称
+                plugin_bot_wrapper._plugin_name = plugin_name
+                plugin_bot_wrapper.Logger.plugin_name = plugin_name
+                
+                plugin_info = {
+                    'name': plugin_name,
+                    'description': getattr(plugin_instance, 'description', '暂无描述'),
+                    'version': getattr(plugin_instance, 'version', '1.0.0'),
+                    'enabled': True,
+                    'module_name': module_name,
+                    'folder': folder_name
+                }
+                self.plugin_info[folder_name] = plugin_info
+                
+                # 调用插件的 on_start 方法（如果存在）
+                if hasattr(plugin_instance, 'on_start'):
+                    try:
+                        on_start_method = getattr(plugin_instance, 'on_start')
+                        if inspect.iscoroutinefunction(on_start_method):
+                            # 如果是异步方法，创建任务执行
+                            import asyncio
+                            asyncio.create_task(self._safe_call_on_start(on_start_method, plugin_name))
+                            print(f"[{plugin_name}] on_start 异步任务已创建")
+                        else:
+                            # 如果是同步方法，直接调用
+                            on_start_method()
+                            print(f"[{plugin_name}] on_start 已调用")
+                    except Exception as e:
+                        print(f"[{plugin_name}] on_start 调用失败: {e}")
+                        import traceback
+                        traceback.print_exc()
+                
+                # 注册插件的事件监听器
+                if hasattr(plugin_instance, 'regisiter'):
+                    handlers = plugin_instance.regisiter()
+                    for handler in handlers:
+                        event_type = handler['listen']
+                        callback = handler['function']
+                        
+                        if event_type not in self.event_handlers:
+                            self.event_handlers[event_type] = []
+                        
+                        # 保存插件名称和处理器的映射
+                        self.event_handlers[event_type].append({
+                            'callback': callback,
+                            'plugin_name': plugin_name,
+                            'plugin_key': folder_name
+                        })
+                
+                print(f"[{folder_name}] 插件加载成功")
+                break
+        else:
+            print(f"[{folder_name}] 警告: 未找到 main 类")
+            self.plugin_info[folder_name] = {
+                'name': folder_name,
+                'description': '未找到 main 类',
+                'version': '未知',
+                'enabled': False,
+                'module_name': module_name,
+                'error': '插件文件中未定义 main 类'
+            }
+    
+    def load_plugin(self, module_name: str):
+        """
+        旧的加载方法（保留兼容性）
+        推荐使用 load_plugin_by_folder
+        """
+        plugin_key = module_name.split('.')[-1]
+        plugins_path = get_plugins_path()
+        
+        # 导入模块
+        try:
+            module = importlib.import_module(module_name)
+        except ImportError as e:
+            print(f"导入插件 {module_name} 失败: {e}")
+            self.plugin_info[plugin_key] = {
+                'name': plugin_key,
+                'description': '插件加载失败',
+                'version': '未知',
+                'enabled': False,
+                'module_name': module_name,
+                'error': f'导入失败: {str(e)}'
+            }
+            return
+        
+        # 查找模块中的 main 类
+        for name, obj in inspect.getmembers(module):
+            if name == 'main' and inspect.isclass(obj):
+                # 为插件创建专属的 Bot 包装器（自动注入插件名）
+                plugin_bot_wrapper = PluginBotWrapper(globals.bot_instance, plugin_key)
+                
+                # 实例化插件（传入 websocket 和包装后的bot）
+                plugin_instance = obj(self.websocket, plugin_bot_wrapper)
+                
+                # 存储插件实例
                 self.plugins[plugin_key] = plugin_instance
                 
                 # 获取插件信息
@@ -291,17 +566,23 @@ class PluginManager:
     def reload_plugin(self, plugin_name: str):
         """重新加载指定插件"""
         if plugin_name in self.plugins:
-            module_name = f"plugins.{plugin_name}"
             try:
                 # 移除旧插件
                 del self.plugins[plugin_name]
                 
-                # 重新加载模块
-                module = importlib.import_module(module_name)
-                importlib.reload(module)
+                # 清除事件处理器
+                for event_type in list(self.event_handlers.keys()):
+                    self.event_handlers[event_type] = [
+                        h for h in self.event_handlers[event_type]
+                        if h['plugin_key'] != plugin_name
+                    ]
+                    if not self.event_handlers[event_type]:
+                        del self.event_handlers[event_type]
                 
-                # 重新实例化
-                self.load_plugin(module_name)
+                # 重新加载
+                plugins_path = get_plugins_path()
+                self.load_plugin_by_folder(plugin_name, plugins_path)
+                
                 print(f"插件 {plugin_name} 重新加载成功")
                 return True
             except Exception as e:
