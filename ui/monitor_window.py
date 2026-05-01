@@ -1,5 +1,5 @@
 import dearpygui.dearpygui as dpg
-import globals
+from core import globals
 import time
 
 

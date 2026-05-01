@@ -3,7 +3,7 @@ import dearpygui.dearpygui as dpg
 
 def enable_plugin(sender, app_data, user_data):
     """启用/禁用插件"""
-    from plugin_loader import get_plugin_manager
+    from utils.plugin_loader import get_plugin_manager
     
     plugin_name = user_data
     enabled = dpg.get_value(f"plugin_enabled_{plugin_name}")
@@ -29,7 +29,7 @@ def enable_plugin(sender, app_data, user_data):
 
 def refresh_plugin_list():
     """刷新插件列表显示"""
-    from plugin_loader import get_plugin_manager
+    from utils.plugin_loader import get_plugin_manager
     
     plugin_manager = get_plugin_manager()
     
@@ -66,7 +66,7 @@ def refresh_plugin_list():
 
 def create_plugin_window():
     """创建插件窗口"""
-    from plugin_loader import get_plugin_manager
+    from utils.plugin_loader import get_plugin_manager
     
     plugin_manager = get_plugin_manager()
     

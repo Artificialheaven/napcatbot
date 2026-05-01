@@ -2,10 +2,10 @@ import websockets
 import dearpygui.dearpygui as dpg
 import asyncio
 
-from main_ui import add_log
-import globals
-from plugin_loader import get_plugin_manager
-from monitor_window import increment_received
+from ui.main_ui import add_log
+from core import globals
+from utils.plugin_loader import get_plugin_manager
+from ui.monitor_window import increment_received
 
 
 # 存储正在运行的插件任务，用于管理和清理

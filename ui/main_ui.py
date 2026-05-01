@@ -1,8 +1,9 @@
 import dearpygui.dearpygui as dpg
-from config_window import create_config_window
-from plugin_window import create_plugin_window, refresh_plugin_list
-from monitor_window import show_monitor_window, increment_received, increment_sent
-from report_window import show_report_window
+import sys
+from ui.config_window import create_config_window
+from ui.plugin_window import create_plugin_window, refresh_plugin_list
+from ui.monitor_window import show_monitor_window, increment_received, increment_sent
+from ui.report_window import show_report_window
 
 # 初始化DVP
 dpg.create_context()
@@ -320,12 +321,22 @@ def show_plugin_window():
         dpg.show_item(plugin_window)
 
 
+def on_close(sender, app_data, user_data):
+    """窗口关闭回调函数"""
+    global looping
+    looping = False
+    print("检测到窗口关闭，正在退出程序...")
+    dpg.stop_dearpygui()
+    sys.exit(0)
+
+
 class UI:
     def __init__(self):
         global looping
         looping = True
-        # 创建主窗口
-        with dpg.window(label="NatCat", tag="main_window", width=1000, height=600):
+        
+        # 创建主窗口，并设置关闭回调
+        with dpg.window(label="NatCat", tag="main_window", width=1000, height=600, on_close=on_close):
             # 主窗口不显示标题栏
             dpg.set_item_pos("main_window", [0, 0])
 

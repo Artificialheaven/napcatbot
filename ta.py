@@ -1,4 +1,3 @@
-import globals
-
+from core import globals
 
 globals.aaa = False

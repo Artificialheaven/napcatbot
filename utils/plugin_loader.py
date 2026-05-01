@@ -1,8 +1,7 @@
 import importlib
-import pkgutil
 import inspect
 import websockets
-import globals
+from core import globals
 import sys
 import os
 import subprocess
@@ -17,7 +16,7 @@ def get_plugins_path():
         # 开发环境
         application_path = os.path.dirname(os.path.abspath(__file__))
     
-    return os.path.join(application_path, 'plugins')
+    return 'plugins'
 
 
 def find_python_interpreter():

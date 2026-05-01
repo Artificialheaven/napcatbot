@@ -1,5 +1,5 @@
 import dearpygui.dearpygui as dpg
-import globals
+from core import globals
 import time
 import asyncio
 import threading
@@ -14,6 +14,7 @@ friend_list_cache = []
 last_update_time = 0
 CACHE_DURATION = 300  # 缓存5分钟
 is_loading = False  # 防止重复加载
+data_fetch_started = False  # 标记数据获取是否已启动
 
 
 def update_report_display():
@@ -52,12 +53,13 @@ def update_report_display():
 
 def fetch_and_update_data():
     """在后台线程中获取并更新数据"""
-    global group_list_cache, friend_list_cache, last_update_time, is_loading
+    global group_list_cache, friend_list_cache, last_update_time, is_loading, data_fetch_started
     
     if is_loading:
         return
     
     is_loading = True
+    data_fetch_started = True
     
     try:
         current_time = time.time()
@@ -70,7 +72,10 @@ def fetch_and_update_data():
         # 如果缓存有效，直接使用缓存数据更新UI
         if cache_valid and groups_cached and friends_cached:
             # 在主线程中更新UI
-            dpg.configure_item("loading_indicator", show=False)
+            if dpg.does_item_exist("loading_indicator"):
+                dpg.configure_item("loading_indicator", show=False)
+            if dpg.does_item_exist("data_status"):
+                dpg.set_value("data_status", "✓ 数据已缓存")
             update_ui_with_cache()
             return
         
@@ -82,15 +87,20 @@ def fetch_and_update_data():
                     asyncio.set_event_loop(loop)
                     try:
                         print("[报表窗口] 正在获取群列表...")
+                        if dpg.does_item_exist("data_status"):
+                            dpg.set_value("data_status", "⟳ 正在获取群列表...")
                         result = loop.run_until_complete(
                             globals.bot_instance.get_group_list(plugin_name="报表窗口")
                         )
                         if result and 'data' in result:
                             group_list_cache = result['data']
+                            print(f"[报表窗口] 获取到 {len(group_list_cache)} 个群")
                     finally:
                         loop.close()
             except Exception as e:
                 print(f"[报表窗口] 获取群列表失败: {e}")
+                if dpg.does_item_exist("data_status"):
+                    dpg.set_value("data_status", "✗ 群列表获取失败")
         
         # 获取好友列表
         if not cache_valid or not friends_cached:
@@ -100,25 +110,35 @@ def fetch_and_update_data():
                     asyncio.set_event_loop(loop)
                     try:
                         print("[报表窗口] 正在获取好友列表...")
+                        if dpg.does_item_exist("data_status"):
+                            dpg.set_value("data_status", "⟳ 正在获取好友列表...")
                         result = loop.run_until_complete(
                             globals.bot_instance.get_friend_list(plugin_name="报表窗口")
                         )
                         if result and 'data' in result:
                             friend_list_cache = result['data']
+                            print(f"[报表窗口] 获取到 {len(friend_list_cache)} 个好友")
                     finally:
                         loop.close()
             except Exception as e:
                 print(f"[报表窗口] 获取好友列表失败: {e}")
+                if dpg.does_item_exist("data_status"):
+                    dpg.set_value("data_status", "✗ 好友列表获取失败")
         
         # 更新最后更新时间
         last_update_time = time.time()
         
         # 在主线程中更新UI
-        dpg.configure_item("loading_indicator", show=False)
+        if dpg.does_item_exist("loading_indicator"):
+            dpg.configure_item("loading_indicator", show=False)
+        if dpg.does_item_exist("data_status"):
+            dpg.set_value("data_status", "✓ 数据已更新")
         update_ui_with_cache()
         
     except Exception as e:
         print(f"[报表窗口] 数据获取异常: {e}")
+        if dpg.does_item_exist("data_status"):
+            dpg.set_value("data_status", "✗ 数据获取异常")
     finally:
         is_loading = False
 
@@ -177,6 +197,8 @@ def refresh_contact_data():
     # 显示加载提示
     if dpg.does_item_exist("loading_indicator"):
         dpg.configure_item("loading_indicator", show=True)
+    if dpg.does_item_exist("data_status"):
+        dpg.set_value("data_status", "⟳ 正在刷新...")
     
     # 在后台线程中获取数据，避免阻塞UI
     thread = threading.Thread(target=fetch_and_update_data, daemon=True)
@@ -190,7 +212,9 @@ def show_report_window():
     # 如果窗口已存在，直接显示并更新
     if dpg.does_item_exist(report_window):
         update_report_display()
-        refresh_contact_data()
+        # 如果数据还未加载，触发加载
+        if not data_fetch_started or len(group_list_cache) == 0:
+            refresh_contact_data()
         dpg.show_item(report_window)
         return report_window
     
@@ -199,13 +223,18 @@ def show_report_window():
         dpg.add_text("消息统计报表", color=[255, 255, 0, 255])
         dpg.add_separator()
         
-        # 运行时间
-        elapsed = time.time() - start_time
-        hours = int(elapsed // 3600)
-        minutes = int((elapsed % 3600) // 60)
-        seconds = int(elapsed % 60)
+        # 运行时间和数据状态
+        with dpg.group(horizontal=True):
+            elapsed = time.time() - start_time
+            hours = int(elapsed // 3600)
+            minutes = int((elapsed % 3600) // 60)
+            seconds = int(elapsed % 60)
+            
+            dpg.add_text(f"运行时间: {hours}小时 {minutes}分钟 {seconds}秒", 
+                        color=[200, 200, 200, 255], tag="report_runtime")
+            dpg.add_spacer(width=20)
+            dpg.add_text("", color=[100, 255, 100, 255], tag="data_status")
         
-        dpg.add_text(f"运行时间: {hours}小时 {minutes}分钟 {seconds}秒", color=[200, 200, 200, 255], tag="report_runtime")
         dpg.add_spacer(height=10)
         
         # 总体统计
@@ -327,8 +356,9 @@ def show_report_window():
                 callback=lambda: dpg.hide_item("report_window")
             )
     
-    # 首次加载数据（非阻塞）
-    refresh_contact_data()
+    # 如果数据还未开始获取，立即启动
+    if not data_fetch_started:
+        refresh_contact_data()
     
     return report_window
 

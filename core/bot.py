@@ -1,7 +1,7 @@
 import uuid
 import asyncio
 import json
-import globals
+from core import globals
 
 
 class logger:
