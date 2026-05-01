@@ -17,7 +17,12 @@ def get_application_path():
 default_config = {
     "show_heartbeat": True,
     "ws_address": "ws://localhost:8080",
-    "token": ""
+    "token": "",
+    "use_plugin_venv": True,
+    "plugin_venv_python_version": "auto",
+    "max_reconnect_attempts": 0,
+    "reconnect_base_delay": 2,
+    "reconnect_max_delay": 60
 }
 
 # 配置文件路径（使用绝对路径，兼容打包环境）

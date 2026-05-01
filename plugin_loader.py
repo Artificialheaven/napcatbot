@@ -69,27 +69,58 @@ def find_python_interpreter():
     return None
 
 
-def install_requirements(requirements_file: str, plugin_name: str) -> bool:
+def check_package_in_lib(lib_path: str, package_name: str) -> bool:
     """
-    安装 requirements.txt 中的依赖
+    检查包是否在指定的 lib 目录中安装
     
-    :param requirements_file: requirements.txt 文件路径
-    :param plugin_name: 插件名称（用于日志）
-    :return: 是否安装成功
+    :param lib_path: lib 目录路径
+    :param package_name: 包名称
+    :return: 是否已安装
     """
-    if not os.path.exists(requirements_file):
-        return True  # 没有 requirements 文件，视为成功
-    
-    print(f"[{plugin_name}] 检测到 requirements.txt，开始安装依赖...")
-    
-    # 查找 Python 解释器
-    python_exe = find_python_interpreter()
-    if not python_exe:
-        print(f"[{plugin_name}] 错误: 未找到 Python 解释器，无法安装依赖")
+    if not os.path.exists(lib_path):
         return False
     
     try:
-        # 读取 requirements.txt 内容
+        # 处理版本约束，只取包名部分
+        clean_name = package_name.split('>=')[0].split('<=')[0].split('==')[0].split('!=')[0].split('>')[0].split('<')[0].strip()
+        clean_name = clean_name.replace('-', '_')
+        
+        # 检查 lib 目录下是否有对应的包文件或目录
+        # Python 包可能是 .py 文件或目录
+        for item in os.listdir(lib_path):
+            item_lower = item.lower()
+            # 检查目录或 .py 文件
+            if item_lower == clean_name or item_lower.startswith(clean_name + '-'):
+                return True
+        
+        return False
+    except Exception:
+        return False
+
+
+def install_to_plugin_lib(requirements_file: str, plugin_name: str, plugin_dir: str) -> bool:
+    """
+    将依赖安装到插件的独立 lib 目录
+    
+    :param requirements_file: requirements.txt 文件路径
+    :param plugin_name: 插件名称
+    :param plugin_dir: 插件目录路径
+    :return: 是否安装成功
+    """
+    if not os.path.exists(requirements_file):
+        return True
+    
+    print(f"[{plugin_name}] 检测到 requirements.txt，开始检查依赖...")
+    
+    # 创建插件的 lib 目录
+    lib_path = os.path.join(plugin_dir, 'lib')
+    os.makedirs(lib_path, exist_ok=True)
+    
+    # 使用当前 Python 解释器
+    python_exe = sys.executable
+    
+    try:
+        # 读取 requirements.txt
         with open(requirements_file, 'r', encoding='utf-8') as f:
             requirements = [line.strip() for line in f if line.strip() and not line.startswith('#')]
         
@@ -97,27 +128,53 @@ def install_requirements(requirements_file: str, plugin_name: str) -> bool:
             print(f"[{plugin_name}] requirements.txt 为空，跳过安装")
             return True
         
-        print(f"[{plugin_name}] 需要安装的依赖: {', '.join(requirements)}")
+        # 检查哪些包需要安装
+        missing_packages = []
+        installed_packages = []
         
-        # 使用 pip 安装依赖
+        for req in requirements:
+            if check_package_in_lib(lib_path, req):
+                installed_packages.append(req)
+                print(f"[{plugin_name}] ✓ 已安装: {req}")
+            else:
+                missing_packages.append(req)
+                print(f"[{plugin_name}] ✗ 未安装: {req}")
+        
+        # 如果所有依赖都已安装，跳过
+        if not missing_packages:
+            print(f"[{plugin_name}] 所有依赖已安装，跳过安装")
+            return True
+        
+        # 安装缺失的依赖到 lib 目录
+        print(f"[{plugin_name}] 需要安装的依赖: {', '.join(missing_packages)}")
+        
         cmd = [
             python_exe,
             '-m', 'pip', 'install',
-            *requirements,
+            '--target', lib_path,  # 安装到指定目录
+            *missing_packages,
             '--quiet',
-            '--disable-pip-version-check'
+            '--disable-pip-version-check',
+            '--no-warn-script-location'
         ]
         
-        print(f"[{plugin_name}] 正在安装依赖...")
+        print(f"[{plugin_name}] 正在安装依赖到 lib 目录...")
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=300  # 5分钟超时
+            timeout=300
         )
         
         if result.returncode == 0:
-            print(f"[{plugin_name}] 依赖安装成功")
+            print(f"[{plugin_name}] 依赖安装成功到: {lib_path}")
+            
+            # 创建 .pth 文件以便 Python 能找到这些包
+            pth_file = os.path.join(plugin_dir, f'{plugin_name}_lib.pth')
+            with open(pth_file, 'w', encoding='utf-8') as f:
+                f.write(lib_path + '\n')
+            
+            print(f"[{plugin_name}] 已创建路径配置文件: {pth_file}")
             return True
         else:
             print(f"[{plugin_name}] 依赖安装失败:")
@@ -133,6 +190,21 @@ def install_requirements(requirements_file: str, plugin_name: str) -> bool:
         import traceback
         traceback.print_exc()
         return False
+
+
+def add_plugin_lib_to_path(plugin_dir: str, plugin_name: str):
+    """
+    将插件的 lib 目录添加到 sys.path
+    
+    :param plugin_dir: 插件目录路径
+    :param plugin_name: 插件名称
+    """
+    lib_path = os.path.join(plugin_dir, 'lib')
+    
+    if os.path.exists(lib_path) and lib_path not in sys.path:
+        # 将插件 lib 目录添加到 sys.path 的前面，优先使用
+        sys.path.insert(0, lib_path)
+        print(f"[{plugin_name}] 已添加 lib 目录到路径: {lib_path}")
 
 
 class PluginBotWrapper:
@@ -308,11 +380,11 @@ class PluginManager:
             print(f"[{folder_name}] 警告: 找不到主文件 {folder_name}.py，跳过")
             return
         
-        # 检查并安装依赖
+        # 检查并安装依赖到独立的 lib 目录
         requirements_file = os.path.join(plugin_dir, 'requirements.txt')
         if os.path.exists(requirements_file):
             print(f"[{folder_name}] 发现 requirements.txt")
-            success = install_requirements(requirements_file, folder_name)
+            success = install_to_plugin_lib(requirements_file, folder_name, plugin_dir)
             
             if not success:
                 print(f"[{folder_name}] 依赖安装失败，跳过此插件")
@@ -325,6 +397,9 @@ class PluginManager:
                     'error': '依赖安装失败，请查看控制台输出'
                 }
                 return
+        
+        # 将插件的 lib 目录添加到 sys.path
+        add_plugin_lib_to_path(plugin_dir, folder_name)
         
         # 确保插件目录有 __init__.py
         init_file = os.path.join(plugin_dir, '__init__.py')

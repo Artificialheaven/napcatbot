@@ -1,3 +1,5 @@
+import sys
+
 import websockets
 import requests
 
@@ -31,6 +33,7 @@ class main:
         可以用于初始化数据、发送欢迎消息等
         """
         print("[Hello插件] on_start 被调用")
+        print(sys.executable, sys.path)
         
         if not self.bot:
             print("[Hello插件] Bot不可用，跳过初始化")
