@@ -1,6 +1,8 @@
 import dearpygui.dearpygui as dpg
 from core import globals
 import time
+import json
+import os
 
 
 # 消息统计数据
@@ -8,6 +10,57 @@ minute_stats = []  # 每分钟统计 [(timestamp, received, sent), ...]
 current_minute_received = 0
 current_minute_sent = 0
 last_minute_check = time.time()
+
+# 临时文件路径
+TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'temp')
+MONITOR_DATA_FILE = os.path.join(TEMP_DIR, 'monitor_data.json')
+
+
+def ensure_temp_dir():
+    """确保临时目录存在"""
+    if not os.path.exists(TEMP_DIR):
+        os.makedirs(TEMP_DIR)
+
+
+def save_monitor_data():
+    """保存监控数据到临时文件"""
+    try:
+        ensure_temp_dir()
+        data = {
+            'minute_stats': minute_stats,
+            'current_minute_received': current_minute_received,
+            'current_minute_sent': current_minute_sent,
+            'last_minute_check': last_minute_check,
+            'timestamp': time.time()
+        }
+        with open(MONITOR_DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"[监控窗口] 保存数据失败: {e}")
+
+
+def load_monitor_data():
+    """从临时文件加载监控数据"""
+    global minute_stats, current_minute_received, current_minute_sent, last_minute_check
+    
+    if not os.path.exists(MONITOR_DATA_FILE):
+        print("[监控窗口] 未找到历史数据文件")
+        return False
+    
+    try:
+        with open(MONITOR_DATA_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        minute_stats = data.get('minute_stats', [])
+        current_minute_received = data.get('current_minute_received', 0)
+        current_minute_sent = data.get('current_minute_sent', 0)
+        last_minute_check = data.get('last_minute_check', time.time())
+        
+        print(f"[监控窗口] 已从临时文件加载数据: {len(minute_stats)}条记录")
+        return True
+    except Exception as e:
+        print(f"[监控窗口] 加载数据失败: {e}")
+        return False
 
 
 def update_minute_stats():
@@ -35,6 +88,9 @@ def update_minute_stats():
             # 只保留最近60分钟的数据
             if len(minute_stats) > 60:
                 minute_stats.pop(0)
+            
+            # 保存到临时文件
+            save_monitor_data()
 
 
 def update_monitor_display():
@@ -95,6 +151,26 @@ def update_monitor_chart():
     dpg.set_value("monitor_chart_content", "\n".join(chart_lines) + legend)
 
 
+def increment_received():
+    """增加接收消息计数"""
+    global current_minute_received
+    current_minute_received += 1
+
+
+def increment_sent():
+    """增加发送消息计数"""
+    global current_minute_sent
+    current_minute_sent += 1
+
+
+def get_current_stats():
+    """获取当前分钟的统计数据"""
+    return {
+        'received': current_minute_received,
+        'sent': current_minute_sent
+    }
+
+
 def show_monitor_window():
     """显示监控窗口"""
     monitor_window = "monitor_window"
@@ -105,6 +181,9 @@ def show_monitor_window():
         update_monitor_display()
         return monitor_window
     
+    # 尝试从临时文件加载历史数据
+    load_monitor_data()
+    
     # 创建新窗口
     with dpg.window(label="实时监控", tag=monitor_window, width=800, height=500, pos=[100, 50]):
         dpg.add_text("消息监控 - 实时统计", color=[255, 255, 0, 255])
@@ -114,7 +193,7 @@ def show_monitor_window():
         with dpg.group(horizontal=True):
             # 接收消息卡片
             with dpg.child_window(width=380, height=150):
-                dpg.add_text("📨 接收消息", color=[100, 255, 100, 255])
+                dpg.add_text("[接收] 接收消息", color=[100, 255, 100, 255])
                 dpg.add_spacer(height=10)
                 dpg.add_text("本分钟:", color=[200, 200, 200, 255])
                 dpg.add_text(f"{current_minute_received}", color=[255, 255, 255, 255], tag="monitor_recv_current")
@@ -124,7 +203,7 @@ def show_monitor_window():
             
             # 发送消息卡片
             with dpg.child_window(width=380, height=150):
-                dpg.add_text("📤 发送消息", color=[100, 100, 255, 255])
+                dpg.add_text("[发送] 发送消息", color=[100, 100, 255, 255])
                 dpg.add_spacer(height=10)
                 dpg.add_text("本分钟:", color=[200, 200, 200, 255])
                 dpg.add_text(f"{current_minute_sent}", color=[255, 255, 255, 255], tag="monitor_sent_current")
@@ -144,24 +223,4 @@ def show_monitor_window():
     update_monitor_display()
     
     return monitor_window
-
-
-def increment_received():
-    """增加接收消息计数"""
-    global current_minute_received
-    current_minute_received += 1
-
-
-def increment_sent():
-    """增加发送消息计数"""
-    global current_minute_sent
-    current_minute_sent += 1
-
-
-def get_current_stats():
-    """获取当前分钟的统计数据"""
-    return {
-        'received': current_minute_received,
-        'sent': current_minute_sent
-    }
 

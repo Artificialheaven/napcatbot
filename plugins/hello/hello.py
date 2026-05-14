@@ -104,6 +104,10 @@ class main:
             # 只处理群消息
             if message.get('message_type') != 'group':
                 return
+
+            if message.get('group_id') != 187593231:
+                print("[Hello插件] 这条消息不来自灰度的群，忽略")
+                return
                 
             group_id = message.get('group_id')
             sender_name = message.get('sender', {}).get('nickname', '未知用户')
@@ -113,7 +117,7 @@ class main:
                     
             # 如果消息包含"你好"，则回复
             if '你好' in raw_message:
-                reply_message = f"你好呀，{sender_name}！我是Hello插件 👋"
+                reply_message = f"你好呀，{sender_name}！我是Hello插件~ 👋"
                 
                 # send_message会自动使用插件名作为来源
                 response = await self.bot.send_message(

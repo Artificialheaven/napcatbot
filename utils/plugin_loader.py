@@ -5,6 +5,7 @@ from core import globals
 import sys
 import os
 import subprocess
+import asyncio
 
 
 def get_plugins_path():
@@ -468,8 +469,19 @@ class PluginManager:
                         if inspect.iscoroutinefunction(on_start_method):
                             # 如果是异步方法，创建任务执行
                             import asyncio
-                            asyncio.create_task(self._safe_call_on_start(on_start_method, plugin_name))
-                            print(f"[{plugin_name}] on_start 异步任务已创建")
+                            try:
+                                # 尝试获取当前运行的事件循环
+                                loop = asyncio.get_running_loop()
+                                # 如果有运行的循环，创建任务
+                                asyncio.create_task(self._safe_call_on_start(on_start_method, plugin_name))
+                                print(f"[{plugin_name}] on_start 异步任务已创建")
+                            except RuntimeError:
+                                # 如果没有运行的事件循环，稍后由主循环处理
+                                print(f"[{plugin_name}] 检测到无运行事件循环，on_start 将在主循环启动后执行")
+                                # 将任务存储起来，等待主循环启动后执行
+                                if not hasattr(globals, 'pending_on_start_tasks'):
+                                    globals.pending_on_start_tasks = []
+                                globals.pending_on_start_tasks.append((on_start_method, plugin_name))
                         else:
                             # 如果是同步方法，直接调用
                             on_start_method()
@@ -566,8 +578,19 @@ class PluginManager:
                         if inspect.iscoroutinefunction(on_start_method):
                             # 如果是异步方法，创建任务执行
                             import asyncio
-                            asyncio.create_task(self._safe_call_on_start(on_start_method, plugin_name))
-                            print(f"[{plugin_name}] on_start 异步任务已创建")
+                            try:
+                                # 尝试获取当前运行的事件循环
+                                loop = asyncio.get_running_loop()
+                                # 如果有运行的循环，创建任务
+                                asyncio.create_task(self._safe_call_on_start(on_start_method, plugin_name))
+                                print(f"[{plugin_name}] on_start 异步任务已创建")
+                            except RuntimeError:
+                                # 如果没有运行的事件循环，稍后由主循环处理
+                                print(f"[{plugin_name}] 检测到无运行事件循环，on_start 将在主循环启动后执行")
+                                # 将任务存储起来，等待主循环启动后执行
+                                if not hasattr(globals, 'pending_on_start_tasks'):
+                                    globals.pending_on_start_tasks = []
+                                globals.pending_on_start_tasks.append((on_start_method, plugin_name))
                         else:
                             # 如果是同步方法，直接调用
                             on_start_method()
@@ -638,49 +661,151 @@ class PluginManager:
         return False
     
     def reload_plugin(self, plugin_name: str):
-        """重新加载指定插件"""
-        if plugin_name in self.plugins:
+        """
+        重新加载指定插件（热重载）
+        
+        :param plugin_name: 插件文件夹名称
+        :return: 是否成功
+        """
+        if plugin_name not in self.plugins and plugin_name not in self.plugin_info:
+            print(f"[热重载] 插件 {plugin_name} 不存在")
+            return False
+        
+        print(f"[热重载] 开始重新加载插件: {plugin_name}")
+        
+        try:
+            # 1. 卸载旧插件
+            self.unload_plugin(plugin_name)
+            
+            # 2. 清除模块缓存
+            module_name = f"plugins.{plugin_name}.{plugin_name}"
+            if module_name in sys.modules:
+                del sys.modules[module_name]
+                print(f"[热重载] 已清除模块缓存: {module_name}")
+            
+            # 3. 清除插件相关的 __pycache__
+            plugin_dir = os.path.join(get_plugins_path(), plugin_name)
+            pycache_dir = os.path.join(plugin_dir, '__pycache__')
+            if os.path.exists(pycache_dir):
+                import shutil
+                shutil.rmtree(pycache_dir)
+                print(f"[热重载] 已清除缓存目录: {pycache_dir}")
+            
+            # 4. 重新加载插件
+            plugins_path = get_plugins_path()
+            self.load_plugin_by_folder(plugin_name, plugins_path)
+            
+            print(f"[热重载] 插件 {plugin_name} 重新加载成功")
+            return True
+            
+        except Exception as e:
+            print(f"[热重载] 重新加载插件 {plugin_name} 失败: {e}")
+            import traceback
+            traceback.print_exc()
+            
+            # 更新插件状态为错误
+            if plugin_name in self.plugin_info:
+                self.plugin_info[plugin_name]['enabled'] = False
+                self.plugin_info[plugin_name]['error'] = f'热重载失败: {str(e)}'
+            
+            return False
+    
+    def reload_all_plugins(self):
+        """
+        重新加载所有插件
+        
+        :return: 成功和失败的插件列表
+        """
+        print("[热重载] 开始重新加载所有插件")
+        
+        success_list = []
+        failed_list = []
+        
+        # 获取所有插件名称列表
+        plugin_names = list(self.plugin_info.keys())
+        
+        for plugin_name in plugin_names:
             try:
-                # 移除旧插件
-                del self.plugins[plugin_name]
-                
-                # 清除事件处理器
-                for event_type in list(self.event_handlers.keys()):
-                    self.event_handlers[event_type] = [
-                        h for h in self.event_handlers[event_type]
-                        if h['plugin_key'] != plugin_name
-                    ]
-                    if not self.event_handlers[event_type]:
-                        del self.event_handlers[event_type]
-                
-                # 重新加载
-                plugins_path = get_plugins_path()
-                self.load_plugin_by_folder(plugin_name, plugins_path)
-                
-                print(f"插件 {plugin_name} 重新加载成功")
-                return True
+                result = self.reload_plugin(plugin_name)
+                if result:
+                    success_list.append(plugin_name)
+                else:
+                    failed_list.append(plugin_name)
             except Exception as e:
-                print(f"重新加载插件 {plugin_name} 失败: {e}")
-                return False
-        return False
+                print(f"[热重载] 插件 {plugin_name} 重载异常: {e}")
+                failed_list.append(plugin_name)
+        
+        print(f"[热重载] 完成: 成功 {len(success_list)} 个, 失败 {len(failed_list)} 个")
+        return success_list, failed_list
     
     def unload_plugin(self, plugin_name: str):
         """卸载指定插件"""
         if plugin_name in self.plugins:
             del self.plugins[plugin_name]
+            print(f"[卸载] 插件实例已移除: {plugin_name}")
+        
+        # 清理事件处理器
+        removed_count = 0
+        for event_type in list(self.event_handlers.keys()):
+            original_count = len(self.event_handlers[event_type])
+            self.event_handlers[event_type] = [
+                h for h in self.event_handlers[event_type]
+                if h['plugin_key'] != plugin_name
+            ]
+            removed_count += original_count - len(self.event_handlers[event_type])
+            if not self.event_handlers[event_type]:
+                del self.event_handlers[event_type]
+        
+        if removed_count > 0:
+            print(f"[卸载] 已移除 {removed_count} 个事件处理器")
+        
+        # 更新插件信息状态
+        if plugin_name in self.plugin_info:
+            self.plugin_info[plugin_name]['enabled'] = False
+        
+        print(f"插件 {plugin_name} 已卸载")
+        return True
+    
+    def scan_new_plugins(self):
+        """
+        扫描并加载新插件（不会重新加载已有插件）
+        
+        :return: 新加载的插件列表
+        """
+        print("[扫描] 开始扫描新插件")
+        
+        new_plugins = []
+        plugins_path = get_plugins_path()
+        
+        if not os.path.exists(plugins_path):
+            print("[扫描] 插件目录不存在")
+            return new_plugins
+        
+        # 遍历 plugins 目录
+        for item in os.listdir(plugins_path):
+            # 跳过已加载的插件
+            if item in self.plugins or item in self.plugin_info:
+                continue
             
-            # 清理事件处理器
-            for event_type in list(self.event_handlers.keys()):
-                self.event_handlers[event_type] = [
-                    h for h in self.event_handlers[event_type]
-                    if h['plugin_key'] != plugin_name
-                ]
-                if not self.event_handlers[event_type]:
-                    del self.event_handlers[event_type]
+            item_path = os.path.join(plugins_path, item)
             
-            print(f"插件 {plugin_name} 已卸载")
-            return True
-        return False
+            # 跳过非目录、__pycache__、以下划线开头的目录
+            if not os.path.isdir(item_path):
+                continue
+            if item.startswith('__') or item.startswith('.'):
+                continue
+            
+            # 尝试加载新插件
+            try:
+                print(f"[扫描] 发现新插件: {item}")
+                self.load_plugin_by_folder(item, plugins_path)
+                if item in self.plugins:
+                    new_plugins.append(item)
+            except Exception as e:
+                print(f"[扫描] 加载插件 {item} 失败: {e}")
+        
+        print(f"[扫描] 完成: 新加载 {len(new_plugins)} 个插件")
+        return new_plugins
 
 
 # 创建全局插件管理器实例

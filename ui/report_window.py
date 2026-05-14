@@ -3,7 +3,8 @@ from core import globals
 import time
 import asyncio
 import threading
-
+import json
+import os
 
 # 启动时间
 start_time = time.time()
@@ -15,6 +16,56 @@ last_update_time = 0
 CACHE_DURATION = 300  # 缓存5分钟
 is_loading = False  # 防止重复加载
 data_fetch_started = False  # 标记数据获取是否已启动
+
+# 临时文件路径
+TEMP_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'temp')
+REPORT_DATA_FILE = os.path.join(TEMP_DIR, 'report_data.json')
+
+
+def ensure_temp_dir():
+    """确保临时目录存在"""
+    if not os.path.exists(TEMP_DIR):
+        os.makedirs(TEMP_DIR)
+
+
+def save_report_data():
+    """保存报表数据到临时文件"""
+    try:
+        ensure_temp_dir()
+        data = {
+            'group_list': group_list_cache,
+            'friend_list': friend_list_cache,
+            'last_update_time': last_update_time,
+            'timestamp': time.time()
+        }
+        with open(REPORT_DATA_FILE, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print("[报表窗口] 数据已保存到临时文件")
+    except Exception as e:
+        print(f"[报表窗口] 保存数据失败: {e}")
+
+
+def load_report_data():
+    """从临时文件加载报表数据"""
+    global group_list_cache, friend_list_cache, last_update_time
+    
+    if not os.path.exists(REPORT_DATA_FILE):
+        print("[报表窗口] 未找到历史数据文件")
+        return False
+    
+    try:
+        with open(REPORT_DATA_FILE, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        group_list_cache = data.get('group_list', [])
+        friend_list_cache = data.get('friend_list', [])
+        last_update_time = data.get('last_update_time', 0)
+        
+        print(f"[报表窗口] 已从临时文件加载数据: {len(group_list_cache)}个群, {len(friend_list_cache)}个好友")
+        return True
+    except Exception as e:
+        print(f"[报表窗口] 加载数据失败: {e}")
+        return False
 
 
 def update_report_display():
@@ -95,6 +146,8 @@ def fetch_and_update_data():
                         if result and 'data' in result:
                             group_list_cache = result['data']
                             print(f"[报表窗口] 获取到 {len(group_list_cache)} 个群")
+                            # 保存数据到临时文件
+                            save_report_data()
                     finally:
                         loop.close()
             except Exception as e:
@@ -118,6 +171,8 @@ def fetch_and_update_data():
                         if result and 'data' in result:
                             friend_list_cache = result['data']
                             print(f"[报表窗口] 获取到 {len(friend_list_cache)} 个好友")
+                            # 保存数据到临时文件
+                            save_report_data()
                     finally:
                         loop.close()
             except Exception as e:
@@ -218,6 +273,10 @@ def show_report_window():
         dpg.show_item(report_window)
         return report_window
     
+    # 尝试从临时文件加载历史数据
+    if not data_fetch_started:
+        load_report_data()
+    
     # 创建新窗口
     with dpg.window(label="统计报表", tag=report_window, width=900, height=700, pos=[100, 50]):
         dpg.add_text("消息统计报表", color=[255, 255, 0, 255])
@@ -246,20 +305,20 @@ def show_report_window():
                 stats = globals.bot_instance.get_stats()
                 
                 with dpg.group(horizontal=True):
-                    dpg.add_text("📨 总接收消息:", color=[100, 255, 100, 255])
+                    dpg.add_text("[接收] 总接收消息:", color=[100, 255, 100, 255])
                     dpg.add_text(f"{stats['received']}", color=[255, 255, 255, 255], tag="report_recv_total")
                 
                 dpg.add_spacer(height=10)
                 
                 with dpg.group(horizontal=True):
-                    dpg.add_text("📤 总发送消息:", color=[100, 100, 255, 255])
+                    dpg.add_text("[发送] 总发送消息:", color=[100, 100, 255, 255])
                     dpg.add_text(f"{stats['sent']}", color=[255, 255, 255, 255], tag="report_sent_total")
                 
                 dpg.add_spacer(height=10)
                 
                 total = stats['received'] + stats['sent']
                 with dpg.group(horizontal=True):
-                    dpg.add_text("📊 消息总量:", color=[255, 255, 100, 255])
+                    dpg.add_text("[总计] 消息总量:", color=[255, 255, 100, 255])
                     dpg.add_text(f"{total}", color=[255, 255, 255, 255], tag="report_total")
                 
                 dpg.add_spacer(height=20)
@@ -270,11 +329,11 @@ def show_report_window():
                     sent_per_min = stats['sent'] / (elapsed / 60)
                     
                     with dpg.group(horizontal=True):
-                        dpg.add_text("⚡ 平均接收速率:", color=[200, 200, 200, 255])
+                        dpg.add_text("[速率] 平均接收速率:", color=[200, 200, 200, 255])
                         dpg.add_text(f"{recv_per_min:.2f} 条/分钟", color=[255, 255, 255, 255], tag="report_recv_rate")
                     
                     with dpg.group(horizontal=True):
-                        dpg.add_text("⚡ 平均发送速率:", color=[200, 200, 200, 255])
+                        dpg.add_text("[速率] 平均发送速率:", color=[200, 200, 200, 255])
                         dpg.add_text(f"{sent_per_min:.2f} 条/分钟", color=[255, 255, 255, 255], tag="report_sent_rate")
             else:
                 dpg.add_text("Bot未初始化", color=[255, 100, 100, 255])
@@ -284,7 +343,7 @@ def show_report_window():
         # 群列表
         with dpg.child_window(width=860, height=220):
             with dpg.group(horizontal=True):
-                dpg.add_text("👥 已加入的群列表", color=[255, 255, 0, 255])
+                dpg.add_text("[群组] 已加入的群列表", color=[255, 255, 0, 255])
                 dpg.add_spacer(width=450)
                 dpg.add_text("加载中...", color=[255, 255, 100, 255], tag="loading_indicator", show=False)
             
@@ -315,7 +374,7 @@ def show_report_window():
         
         # 好友列表
         with dpg.child_window(width=860, height=220):
-            dpg.add_text("👤 好友列表", color=[255, 255, 0, 255])
+            dpg.add_text("[好友] 好友列表", color=[255, 255, 0, 255])
             dpg.add_separator()
             
             with dpg.group(horizontal=True):
@@ -355,6 +414,12 @@ def show_report_window():
                 height=30,
                 callback=lambda: dpg.hide_item("report_window")
             )
+    
+    # 如果已有缓存数据，立即显示
+    if len(group_list_cache) > 0 or len(friend_list_cache) > 0:
+        update_ui_with_cache()
+        if dpg.does_item_exist("data_status"):
+            dpg.set_value("data_status", "✓ 已加载历史数据")
     
     # 如果数据还未开始获取，立即启动
     if not data_fetch_started:

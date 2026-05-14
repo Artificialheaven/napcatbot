@@ -1,9 +1,11 @@
 import websockets
 import dearpygui.dearpygui as dpg
 import asyncio
-
-from ui.main_ui import add_log
 from core import globals
+
+# if not globals.no_gui:
+from ui.main_ui import add_log
+
 from utils.plugin_loader import get_plugin_manager
 from ui.monitor_window import increment_received
 
@@ -26,7 +28,10 @@ async def prase_event(event: dict):
 
     if 'echo' in event:
         if event['echo'] == 'get_login_info':
-            dpg.set_value('name', f"{event['data']['nickname']}({event['data']['user_id']})")
+            if globals.no_gui:
+                print(f"登录信息: {event['data']}")
+            else:
+                dpg.set_value('name', f"{event['data']['nickname']}({event['data']['user_id']})")
             globals.bot_id = event['data']['user_id']
         globals.echo_dict[event['echo']] = event
         ret = False
@@ -94,6 +99,44 @@ async def prase_event(event: dict):
                         import traceback
                         traceback.print_exc()
             
+            ret = False
+
+        if event['message_type'] == 'private':
+            add_log(
+                f'{event["self_id"]}',
+                f'{event["sender"]["nickname"]}({event["sender"]["user_id"]})',
+                f'私聊消息: {event["raw_message"]}',
+                '蓝色'
+            )
+
+            # 增加接收消息计数
+            increment_received()
+
+            # 调用插件的消息处理函数
+            plugin_manager = get_plugin_manager()
+            if plugin_manager:
+                handlers = plugin_manager.get_event_handlers('message')
+                for handler_info in handlers:
+                    try:
+                        callback = handler_info['callback']
+                        plugin_name = handler_info['plugin_name']
+
+                        # 检查是否是协程函数
+                        if asyncio.iscoroutinefunction(callback):
+                            # 创建任务并立即返回，不等待完成，传递插件名称
+                            task = asyncio.create_task(_safe_execute_handler(callback, event, plugin_name))
+                            plugin_tasks.add(task)
+                            # 任务完成后自动从集合中移除
+                            task.add_done_callback(plugin_tasks.discard)
+                        else:
+                            # 同步函数在线程池中执行，避免阻塞
+                            loop = asyncio.get_event_loop()
+                            loop.run_in_executor(None, _safe_sync_handler, callback, event)
+                    except Exception as e:
+                        print(f"插件处理消息失败: {e}")
+                        import traceback
+                        traceback.print_exc()
+
             ret = False
 
     return ret
