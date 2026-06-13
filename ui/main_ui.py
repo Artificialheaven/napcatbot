@@ -1,5 +1,6 @@
 import dearpygui.dearpygui as dpg
 import sys
+from ui.system_window import show_system_window
 from ui.config_window import create_config_window
 from ui.plugin_window import create_plugin_window, refresh_plugin_list
 from ui.monitor_window import show_monitor_window, increment_received, increment_sent
@@ -10,8 +11,13 @@ if globals.no_gui:
     print("[系统] 无GUI模式，跳过UI初始化")
 
     def add_log(response, source, content, color):
-        """无GUI模式下的日志输出"""
+        """无GUI模式下的日志输出 — 同时推送到 Web 管理面板"""
         print(f"[{response}] [{source}] {content}")
+        try:
+            from ui.web.server import push_log_entry
+            push_log_entry(str(response), str(source), str(content), color)
+        except Exception:
+            pass
 
 else:
     # 初始化DVP
@@ -454,7 +460,7 @@ else:
                             ("插件", show_plugin_window, "插件管理"),
                             ("监控", show_monitor_window, "实时监控面板"),
                             ("报表", show_report_window, "统计报表"),
-                            ("状态", lambda: print("系统状态"), "系统运行状态"),
+                            ("状态", show_system_window, "系统运行状态"),
                             ("刷新", lambda: print("刷新日志"), "刷新日志内容")
                         ]
 
@@ -479,6 +485,5 @@ else:
             dpg.show_viewport()
             dpg.start_dearpygui()
             dpg.destroy_context()
-
 
 

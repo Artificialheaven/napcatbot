@@ -2,6 +2,7 @@ import websockets
 import dearpygui.dearpygui as dpg
 import asyncio
 from core import globals
+from utils.obj import MessageEvent, MetaEvent, NoticeEvent
 
 # if not globals.no_gui:
 from ui.main_ui import add_log
@@ -23,7 +24,8 @@ async def init_bots(websocket: websockets.ClientConnection):
     await websocket.send(str(data))
 
 
-async def prase_event(event: dict):
+async def parse_event(event: dict):
+    """解析并分发 OneBot 事件（新名，推荐使用）"""
     ret = True
 
     if 'echo' in event:
@@ -38,9 +40,9 @@ async def prase_event(event: dict):
         return ret
 
     if event['post_type'] == 'meta_event':
-        if event['meta_event_type'] == 'lifecycle':
-            if event['sub_type'] == 'connect':
-                print('wtf')
+        meta = MetaEvent(event)
+        if meta.meta_event_type == 'lifecycle':
+            if meta.sub_type == 'connect':
                 add_log(
                     '框架',
                     'DearQQ',
@@ -50,7 +52,7 @@ async def prase_event(event: dict):
                 await init_bots(globals.websocket)
                 ret = False
 
-        if event['meta_event_type'] == 'heartbeat':
+        if meta.meta_event_type == 'heartbeat':
             if globals.show_heart_beat:
                 add_log(
                     'Napcat',
@@ -58,22 +60,24 @@ async def prase_event(event: dict):
                     '心跳包收到√',
                     '黄色'
                 )
-            else:
-                pass
             ret = False
 
     if event['post_type'] == 'message':
-        if event['message_type'] == 'group':
+        js = event
+        # 构造结构化消息事件
+        msg_event = MessageEvent(event)
+
+        if msg_event.message_type == 'group':
             add_log(
-                f'{event["self_id"]}',
-                f'{event["group_name"]}({event["group_id"]})',
-                f'{event["sender"]["nickname"]}({event["sender"]["user_id"]}) 说:{event["raw_message"]}',
+                f'{js["self_id"]}',
+                f'{js["group_name"]}({js["group_id"]})',
+                f'{js["sender"]["nickname"]}({js["sender"]["user_id"]}) 说:{js["raw_message"]}',
                 '绿色'
             )
-            
+
             # 增加接收消息计数
             increment_received()
-            
+
             # 调用插件的消息处理函数
             plugin_manager = get_plugin_manager()
             if plugin_manager:
@@ -82,30 +86,32 @@ async def prase_event(event: dict):
                     try:
                         callback = handler_info['callback']
                         plugin_name = handler_info['plugin_name']
-                        
+
+                        # 注入插件名到事件对象
+                        msg_event._plugin_name = plugin_name
+
                         # 检查是否是协程函数
                         if asyncio.iscoroutinefunction(callback):
-                            # 创建任务并立即返回，不等待完成，传递插件名称
-                            task = asyncio.create_task(_safe_execute_handler(callback, event, plugin_name))
+                            task = asyncio.create_task(
+                                _safe_execute_handler(callback, msg_event, plugin_name)
+                            )
                             plugin_tasks.add(task)
-                            # 任务完成后自动从集合中移除
                             task.add_done_callback(plugin_tasks.discard)
                         else:
-                            # 同步函数在线程池中执行，避免阻塞
                             loop = asyncio.get_event_loop()
-                            loop.run_in_executor(None, _safe_sync_handler, callback, event)
+                            loop.run_in_executor(None, _safe_sync_handler, callback, msg_event)
                     except Exception as e:
                         print(f"插件处理消息失败: {e}")
                         import traceback
                         traceback.print_exc()
-            
+
             ret = False
 
-        if event['message_type'] == 'private':
+        if msg_event.message_type == 'private':
             add_log(
-                f'{event["self_id"]}',
-                f'{event["sender"]["nickname"]}({event["sender"]["user_id"]})',
-                f'私聊消息: {event["raw_message"]}',
+                f'{js["self_id"]}',
+                f'{js["sender"]["nickname"]}({js["sender"]["user_id"]})',
+                f'私聊消息: {js["raw_message"]}',
                 '蓝色'
             )
 
@@ -121,17 +127,18 @@ async def prase_event(event: dict):
                         callback = handler_info['callback']
                         plugin_name = handler_info['plugin_name']
 
-                        # 检查是否是协程函数
+                        # 注入插件名到事件对象
+                        msg_event._plugin_name = plugin_name
+
                         if asyncio.iscoroutinefunction(callback):
-                            # 创建任务并立即返回，不等待完成，传递插件名称
-                            task = asyncio.create_task(_safe_execute_handler(callback, event, plugin_name))
+                            task = asyncio.create_task(
+                                _safe_execute_handler(callback, msg_event, plugin_name)
+                            )
                             plugin_tasks.add(task)
-                            # 任务完成后自动从集合中移除
                             task.add_done_callback(plugin_tasks.discard)
                         else:
-                            # 同步函数在线程池中执行，避免阻塞
                             loop = asyncio.get_event_loop()
-                            loop.run_in_executor(None, _safe_sync_handler, callback, event)
+                            loop.run_in_executor(None, _safe_sync_handler, callback, msg_event)
                     except Exception as e:
                         print(f"插件处理消息失败: {e}")
                         import traceback
@@ -139,35 +146,66 @@ async def prase_event(event: dict):
 
             ret = False
 
+    # 通知事件也构造结构化对象（为后续扩展准备）
+    if event['post_type'] == 'notice':
+        notice_event = NoticeEvent(event)
+        plugin_manager = get_plugin_manager()
+        if plugin_manager:
+            handlers = plugin_manager.get_event_handlers('notice')
+            for handler_info in handlers:
+                try:
+                    callback = handler_info['callback']
+                    plugin_name = handler_info['plugin_name']
+                    notice_event._plugin_name = plugin_name
+
+                    if asyncio.iscoroutinefunction(callback):
+                        task = asyncio.create_task(
+                            _safe_execute_handler(callback, notice_event, plugin_name)
+                        )
+                        plugin_tasks.add(task)
+                        task.add_done_callback(plugin_tasks.discard)
+                    else:
+                        loop = asyncio.get_event_loop()
+                        loop.run_in_executor(None, _safe_sync_handler, callback, notice_event)
+                except Exception as e:
+                    print(f"插件处理通知失败: {e}")
+                    import traceback
+                    traceback.print_exc()
+        ret = False
+
     return ret
 
 
-async def _safe_execute_handler(handler, event, plugin_name=None):
-    """安全地执行异步插件处理器"""
+async def prase_event(event: dict):
+    """
+    已弃用：请使用 parse_event()
+    """
+    import warnings
+    warnings.warn(
+        "prase_event() is deprecated, use parse_event() instead",
+        DeprecationWarning,
+        stacklevel=2
+    )
+    return await parse_event(event)
+
+
+async def _safe_execute_handler(handler, event_obj, plugin_name=None):
+    """安全地执行异步插件处理器（接收结构化事件对象）"""
     try:
-        # 将插件名称注入到事件对象中，供插件使用
-        if plugin_name:
-            event['_plugin_name'] = plugin_name
-        await handler(event)
+        if plugin_name and hasattr(event_obj, '_plugin_name'):
+            event_obj._plugin_name = plugin_name
+        await handler(event_obj)
     except Exception as e:
-        print(f"插件异步处理器出错: {e}")
+        print(f"[-] 插件处理失败: {e}")
         import traceback
         traceback.print_exc()
 
 
-def _safe_sync_handler(handler, event):
-    """安全地执行同步插件处理器"""
+def _safe_sync_handler(handler, event_obj):
+    """安全地执行同步插件处理器（接收结构化事件对象）"""
     try:
-        handler(event)
+        handler(event_obj)
     except Exception as e:
-        print(f"插件同步处理器出错: {e}")
+        print(f"[-] 同步插件处理失败: {e}")
         import traceback
         traceback.print_exc()
-
-
-async def cleanup_tasks():
-    """清理未完成的任务（在程序退出时调用）"""
-    if plugin_tasks:
-        print(f"等待 {len(plugin_tasks)} 个插件任务完成...")
-        await asyncio.gather(*plugin_tasks, return_exceptions=True)
-        print("所有插件任务已完成")

@@ -323,6 +323,9 @@ class PluginLogger:
         """自定义日志 - 来源强制为插件名"""
         self.add_log(response, self.plugin_name, content, color)
 
+    def msg(self, content):
+        self.info("框架", self.plugin_name, content)
+
 
 class PluginManager:
     """插件管理器"""
@@ -467,23 +470,28 @@ class PluginManager:
                     try:
                         on_start_method = getattr(plugin_instance, 'on_start')
                         if inspect.iscoroutinefunction(on_start_method):
-                            # 如果是异步方法，创建任务执行
+                            # 异步方法：尝试在当前线程或通过线程安全调度执行
                             import asyncio
                             try:
-                                # 尝试获取当前运行的事件循环
                                 loop = asyncio.get_running_loop()
-                                # 如果有运行的循环，创建任务
-                                asyncio.create_task(self._safe_call_on_start(on_start_method, plugin_name))
+                                task = asyncio.create_task(self._safe_call_on_start(on_start_method, plugin_name))
                                 print(f"[{plugin_name}] on_start 异步任务已创建")
                             except RuntimeError:
-                                # 如果没有运行的事件循环，稍后由主循环处理
-                                print(f"[{plugin_name}] 检测到无运行事件循环，on_start 将在主循环启动后执行")
-                                # 将任务存储起来，等待主循环启动后执行
-                                if not hasattr(globals, 'pending_on_start_tasks'):
-                                    globals.pending_on_start_tasks = []
-                                globals.pending_on_start_tasks.append((on_start_method, plugin_name))
+                                # 当前线程无运行中的事件循环 → 线程安全调度到主循环
+                                if hasattr(globals, 'event_loop') and globals.event_loop is not None and globals.event_loop.is_running():
+                                    asyncio.run_coroutine_threadsafe(
+                                        self._safe_call_on_start(on_start_method, plugin_name),
+                                        globals.event_loop
+                                    )
+                                    print(f"[{plugin_name}] on_start 已通过线程安全方式调度到主事件循环")
+                                else:
+                                    # 主循环尚未就绪，存储待执行（仅初始加载时触发）
+                                    if not hasattr(globals, 'pending_on_start_tasks'):
+                                        globals.pending_on_start_tasks = []
+                                    globals.pending_on_start_tasks.append((on_start_method, plugin_name))
+                                    print(f"[{plugin_name}] 事件循环未就绪，on_start 将延迟执行")
                         else:
-                            # 如果是同步方法，直接调用
+                            # 同步方法，直接调用
                             on_start_method()
                             print(f"[{plugin_name}] on_start 已调用")
                     except Exception as e:
@@ -576,37 +584,49 @@ class PluginManager:
                     try:
                         on_start_method = getattr(plugin_instance, 'on_start')
                         if inspect.iscoroutinefunction(on_start_method):
-                            # 如果是异步方法，创建任务执行
+                            # 异步方法：尝试在当前线程或通过线程安全调度执行
                             import asyncio
                             try:
-                                # 尝试获取当前运行的事件循环
                                 loop = asyncio.get_running_loop()
-                                # 如果有运行的循环，创建任务
-                                asyncio.create_task(self._safe_call_on_start(on_start_method, plugin_name))
+                                task = asyncio.create_task(self._safe_call_on_start(on_start_method, plugin_name))
                                 print(f"[{plugin_name}] on_start 异步任务已创建")
                             except RuntimeError:
-                                # 如果没有运行的事件循环，稍后由主循环处理
-                                print(f"[{plugin_name}] 检测到无运行事件循环，on_start 将在主循环启动后执行")
-                                # 将任务存储起来，等待主循环启动后执行
-                                if not hasattr(globals, 'pending_on_start_tasks'):
-                                    globals.pending_on_start_tasks = []
-                                globals.pending_on_start_tasks.append((on_start_method, plugin_name))
+                                # 当前线程无运行中的事件循环 → 线程安全调度到主循环
+                                if hasattr(globals, 'event_loop') and globals.event_loop is not None and globals.event_loop.is_running():
+                                    asyncio.run_coroutine_threadsafe(
+                                        self._safe_call_on_start(on_start_method, plugin_name),
+                                        globals.event_loop
+                                    )
+                                    print(f"[{plugin_name}] on_start 已通过线程安全方式调度到主事件循环")
+                                else:
+                                    # 主循环尚未就绪，存储待执行（仅初始加载时触发）
+                                    if not hasattr(globals, 'pending_on_start_tasks'):
+                                        globals.pending_on_start_tasks = []
+                                    globals.pending_on_start_tasks.append((on_start_method, plugin_name))
+                                    print(f"[{plugin_name}] 事件循环未就绪，on_start 将延迟执行")
                         else:
-                            # 如果是同步方法，直接调用
+                            # 同步方法，直接调用
                             on_start_method()
                             print(f"[{plugin_name}] on_start 已调用")
                     except Exception as e:
                         print(f"[{plugin_name}] on_start 调用失败: {e}")
                         import traceback
                         traceback.print_exc()
-                
+
                 # 注册插件的事件监听器
-                if hasattr(plugin_instance, 'regisiter'):
+                # 优先使用 register()，回退到已弃用的 regisiter()
+                if hasattr(plugin_instance, 'register'):
+                    handlers = plugin_instance.register()
+                elif hasattr(plugin_instance, 'regisiter'):
                     handlers = plugin_instance.regisiter()
+                else:
+                    handlers = []
+
+                if handlers:
                     for handler in handlers:
                         event_type = handler['listen']
                         callback = handler['function']
-                        
+
                         if event_type not in self.event_handlers:
                             self.event_handlers[event_type] = []
                         
@@ -616,7 +636,7 @@ class PluginManager:
                             'plugin_name': plugin_name,
                             'plugin_key': plugin_key
                         })
-                
+
                 break
     
     async def _safe_call_on_start(self, on_start_method, plugin_name):
@@ -648,12 +668,12 @@ class PluginManager:
         """禁用插件"""
         if plugin_name in self.plugin_info:
             self.plugin_info[plugin_name]['enabled'] = False
-            # 清理事件处理器
+            # 清理事件处理器（使用 plugin_key 精确匹配）
             for event_type in list(self.event_handlers.keys()):
+                original_count = len(self.event_handlers[event_type])
                 self.event_handlers[event_type] = [
                     h for h in self.event_handlers[event_type]
-                    if not (hasattr(h['callback'], '__self__') and 
-                        h['callback'].__self__.__class__.__module__.split('.')[-1] == plugin_name)
+                    if h['plugin_key'] != plugin_name
                 ]
                 if not self.event_handlers[event_type]:
                     del self.event_handlers[event_type]
@@ -825,3 +845,42 @@ def init_plugin_manager(websocket: websockets.ClientConnection):
     return _plugin_manager
 
 
+def reload_plugin(plugin_name: str) -> bool:
+    """
+    重新加载指定插件（模块级热重载入口）
+
+    :param plugin_name: 插件文件夹名称
+    :return: 是否成功
+    """
+    manager = get_plugin_manager()
+    if manager is None:
+        print("[热重载] 插件管理器未初始化")
+        return False
+    return manager.reload_plugin(plugin_name)
+
+
+def reload_all_plugins():
+    """
+    重新加载所有插件（模块级入口）
+
+    :return: (成功列表, 失败列表)
+    """
+    manager = get_plugin_manager()
+    if manager is None:
+        print("[热重载] 插件管理器未初始化")
+        return [], []
+    return manager.reload_all_plugins()
+
+
+def unload_plugin(plugin_name: str) -> bool:
+    """
+    卸载指定插件（模块级入口）
+
+    :param plugin_name: 插件文件夹名称
+    :return: 是否成功
+    """
+    manager = get_plugin_manager()
+    if manager is None:
+        print("[卸载] 插件管理器未初始化")
+        return False
+    return manager.unload_plugin(plugin_name)

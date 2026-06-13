@@ -278,7 +278,7 @@ def show_report_window():
         load_report_data()
     
     # 创建新窗口
-    with dpg.window(label="统计报表", tag=report_window, width=900, height=700, pos=[100, 50]):
+    with dpg.window(label="统计报表", tag=report_window, width=900, height=550, pos=[100, 50]):
         dpg.add_text("消息统计报表", color=[255, 255, 0, 255])
         dpg.add_separator()
         

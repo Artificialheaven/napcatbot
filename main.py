@@ -87,15 +87,31 @@ async def connect_and_run(no_gui=False):
                 reconnect_count = 0
                 
                 print('[系统] WebSocket连接成功')
+
+                # 保存事件循环引用，供热重载线程安全调度
+                globals.event_loop = asyncio.get_running_loop()
                 
                 # 初始化日志记录器
-                if not no_gui:
+                # 检查是否启用 Web 管理面板
+                enable_web = configs.conf.get("enable_web_admin", False)
+                web_port = configs.conf.get("web_admin_port", 8081)
+
+                if enable_web:
+                    # 启动 Web 管理面板
+                    from ui.web.server import start_web_server, web_logger
+                    start_web_server(
+                        host="0.0.0.0", port=web_port,
+                        token=configs.conf.get("token", "test")
+                    )
+                    print(f"[系统] Web 管理面板已启动: http://0.0.0.0:{web_port}")
+                    bot_logger = logger(web_logger)
+                elif not no_gui:
                     from ui import main_ui
                     bot_logger = logger(main_ui.add_log)
                 else:
-                    # 无GUI模式，使用print作为日志输出
+                    # 无GUI且未启用Web → 纯控制台日志
                     def console_logger(level, source, message, color=None):
-                        print(f'[{level}] [{source}] {message}')
+                        print(f"[{level}] [{source}] {message}")
                     bot_logger = logger(console_logger)
                 
                 # 初始化Bot实例
@@ -104,12 +120,24 @@ async def connect_and_run(no_gui=False):
                 
                 print('[系统] Bot实例已创建')
                 
+                # 确保事件循环已经就绪
+                try:
+                    loop = asyncio.get_running_loop()
+                    print(f'[系统] 事件循环已就绪: {loop}')
+                except RuntimeError as e:
+                    print(f'[系统] 警告: 事件循环未就绪: {e}')
+                
                 # 初始化插件管理器（此时bot_instance已经设置到globals中）
                 print("开始初始化插件管理器...")
                 manager = init_plugin_manager(websocket)
                 print(f"插件管理器初始化完成: {manager}")
                 
                 print(f'[系统] 插件管理器已初始化，加载了 {len(manager.plugins)} 个插件')
+
+                # 注册插件 Web Blueprint（在 Web 管理已启用时）
+                if enable_web:
+                    from ui.web.server import register_plugin_blueprints
+                    register_plugin_blueprints(manager)
                 
                 # 执行待处理的 on_start 任务
                 if hasattr(globals, 'pending_on_start_tasks') and globals.pending_on_start_tasks:
@@ -146,7 +174,7 @@ async def connect_and_run(no_gui=False):
                                 continue
                         
                         # 处理其他事件
-                        if await events.prase_event(response):
+                        if await events.parse_event(response):
                             print(f'Received: {_response}')
                     
                     except websockets.exceptions.ConnectionClosed as e:

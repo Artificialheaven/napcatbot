@@ -19,6 +19,8 @@ default_config = {
     "ws_address": "ws://localhost:8080",
     "token": "",
     "use_plugin_venv": True,
+    "enable_web_admin": False,
+    "web_admin_port": 8081,
     "plugin_venv_python_version": "auto",
     "max_reconnect_attempts": 0,
     "reconnect_base_delay": 2,
