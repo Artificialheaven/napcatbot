@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Slang 规则管理</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #0f1117; color: #c9d1d9; padding: 24px; max-width: 1200px;
+    margin: 0 auto;
+  }
+  h1 { font-size: 22px; margin-bottom: 8px; color: #f0f6fc; }
+  .subtitle { color: #8b949e; font-size: 13px; margin-bottom: 24px; }
+  .card {
+    background: #161b22; border: 1px solid #30363d; border-radius: 8px;
+    padding: 20px; margin-bottom: 20px;
+  }
+  .card h2 { font-size: 16px; color: #f0f6fc; margin-bottom: 14px; }
+
+  /* 表单 */
+  .form-row { display: flex; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+  .form-group { display: flex; flex-direction: column; gap: 4px; }
+  .form-group label { font-size: 12px; color: #8b949e; }
+  input, select, textarea {
+    background: #0d1117; color: #c9d1d9; border: 1px solid #30363d;
+    border-radius: 6px; padding: 7px 10px; font-size: 13px; outline: none;
+  }
+  input:focus, select:focus, textarea:focus { border-color: #58a6ff; }
+  textarea { resize: vertical; min-height: 60px; font-family: "Consolas", monospace; }
+  .grow { flex: 1; min-width: 160px; }
+  .w-80 { width: 80px; }
+  .w-120 { width: 120px; }
+  .btn {
+    padding: 7px 16px; border: 1px solid #30363d; border-radius: 6px;
+    cursor: pointer; font-size: 13px; font-weight: 500; transition: background .15s;
+  }
+  .btn-primary { background: #238636; color: #fff; border-color: #238636; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-danger { background: transparent; color: #f85149; border-color: #f85149; }
+  .btn-danger:hover { background: #da3633; color: #fff; }
+  .btn-sm { padding: 3px 10px; font-size: 12px; }
+
+  /* 表格 */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; padding: 8px 10px; border-bottom: 1px solid #30363d; color: #8b949e; font-weight: 500; }
+  td { padding: 8px 10px; border-bottom: 1px solid #21262d; vertical-align: top; }
+  tr:hover td { background: #1c2129; }
+  .badge {
+    display: inline-block; padding: 2px 7px; border-radius: 10px;
+    font-size: 11px; font-weight: 500;
+  }
+  .badge-exact { background: #1a3a5c; color: #79c0ff; }
+  .badge-fuzzy { background: #1a3a2a; color: #7ee787; }
+  .badge-regex { background: #3a1a5c; color: #d2a8ff; }
+  .badge-on { background: #1a3a2a; color: #7ee787; }
+  .badge-off { background: #3a1a1a; color: #f85149; }
+  .code-cell {
+    font-family: "Consolas", "Courier New", monospace; font-size: 12px;
+    white-space: pre-wrap; word-break: break-all;
+    max-width: 350px; max-height: 80px; overflow: auto;
+    background: #0d1117; padding: 4px 8px; border-radius: 4px;
+  }
+  .empty { text-align: center; color: #8b949e; padding: 32px 0; }
+  .toast {
+    position: fixed; top: 16px; right: 16px; padding: 10px 20px;
+    border-radius: 6px; font-size: 13px; z-index: 999;
+    animation: fadeIn .2s ease;
+  }
+  .toast-ok { background: #238636; color: #fff; }
+  .toast-err { background: #da3633; color: #fff; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: translateY(0); } }
+
+  /* 模态框 */
+  .modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.65);
+    z-index:100; align-items:center; justify-content:center; }
+  .modal-overlay.show { display:flex; }
+  .modal-box { background:#161b22; border:1px solid #30363d;
+    border-radius:12px; padding:24px; width:640px; max-height:85vh; overflow-y:auto; }
+  .modal-box h2 { color:#f0f6fc; font-size:17px; margin-bottom:16px; }
+  .modal-box .btn-row { display:flex; gap:10px; margin-top:16px; justify-content:flex-end; }
+</style>
+</head>
+<body>
+
+<h1>🗂 Slang 规则管理</h1>
+<p class="subtitle">管理消息匹配规则 —— 命中后自动执行 Slang DSL 脚本</p>
+
+<!-- 添加规则 -->
+<div class="card">
+  <h2>➕ 添加规则</h2>
+  <div class="form-row">
+    <div class="form-group w-120">
+      <label>匹配方式</label>
+      <select id="f-match_type">
+        <option value="exact">完全匹配</option>
+        <option value="fuzzy">模糊匹配</option>
+        <option value="regex">正则匹配</option>
+      </select>
+    </div>
+    <div class="form-group w-80">
+      <label>优先级</label>
+      <input id="f-priority" type="number" value="0" min="0">
+    </div>
+    <div class="form-group grow">
+      <label>描述（可选）</label>
+      <input id="f-description" type="text" placeholder="规则描述">
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="form-group grow">
+      <label>匹配内容</label>
+      <input id="f-match_content" type="text" placeholder="完全匹配=消息本体 / 模糊=包含关键词 / 正则=正则表达式">
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="form-group grow">
+      <label>Slang 代码</label>
+      <textarea id="f-slang_code" placeholder="【回复匹配成功！发送者：【变量发送者QQ】】"></textarea>
+    </div>
+  </div>
+  <button class="btn btn-primary" onclick="addRule()">添加规则</button>
+</div>
+
+<!-- 规则列表 -->
+<div class="card">
+  <h2>📋 规则列表</h2>
+  <div id="rules-container">
+    <div class="empty">加载中...</div>
+  </div>
+</div>
+
+<!-- 编辑模态框 -->
+<div class="modal-overlay" id="editModal">
+  <div class="modal-box">
+    <h2>✏️ 编辑规则 #<span id="edit-id"></span></h2>
+    <div class="form-row">
+      <div class="form-group w-120">
+        <label>匹配方式</label>
+        <select id="e-match_type">
+          <option value="exact">完全匹配</option>
+          <option value="fuzzy">模糊匹配</option>
+          <option value="regex">正则匹配</option>
+        </select>
+      </div>
+      <div class="form-group w-80">
+        <label>优先级</label>
+        <input id="e-priority" type="number" min="0">
+      </div>
+      <div class="form-group grow">
+        <label>描述（可选）</label>
+        <input id="e-description" type="text">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group grow">
+        <label>匹配内容</label>
+        <input id="e-match_content" type="text">
+      </div>
+    </div>
+    <div class="form-row">
+      <div class="form-group grow">
+        <label>Slang 代码</label>
+        <textarea id="e-slang_code" rows="4"></textarea>
+      </div>
+    </div>
+    <div class="btn-row">
+      <button class="btn" onclick="closeEditModal()">取消</button>
+      <button class="btn btn-primary" onclick="saveEdit()">💾 保存</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '/slang/api/rules';
+let _editRuleId = null;
+let _rulesCache = {};
+
+function toast(msg, ok) {
+  const t = document.createElement('div');
+  t.className = 'toast ' + (ok ? 'toast-ok' : 'toast-err');
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(() => t.remove(), 2500);
+}
+
+async function loadRules() {
+  _rulesCache = {};
+  try {
+    const resp = await fetch(API);
+    const data = await resp.json();
+    const container = document.getElementById('rules-container');
+    if (!data.rules || data.rules.length === 0) {
+      container.innerHTML = '<div class="empty">暂无规则，请在上方添加</div>';
+      return;
+    }
+    let html = `<table>
+      <tr><th>ID</th><th>匹配方式</th><th>匹配内容</th><th>Slang 代码</th><th>状态</th><th>优先级</th><th>描述</th><th>操作</th></tr>`;
+    for (const r of data.rules) {
+      const typeBadge = {
+        exact: 'badge-exact', fuzzy: 'badge-fuzzy', regex: 'badge-regex'
+      }[r.match_type] || '';
+      const typeLabel = { exact: '完全', fuzzy: '模糊', regex: '正则' }[r.match_type] || r.match_type;
+      _rulesCache[r.id] = r;
+      html += `<tr>
+        <td>${r.id}</td>
+        <td><span class="badge ${typeBadge}">${typeLabel}</span></td>
+        <td><div class="code-cell">${esc(r.match_content)}</div></td>
+        <td><div class="code-cell">${esc(r.slang_code)}</div></td>
+        <td>
+          <span class="badge ${r.enabled ? 'badge-on' : 'badge-off'}">
+            ${r.enabled ? '启用' : '禁用'}
+          </span>
+        </td>
+        <td>${r.priority}</td>
+        <td>${esc(r.description || '—')}</td>
+        <td>
+          <button class="btn btn-sm" onclick="editRule(${r.id})">✏️ 编辑</button>
+          <button class="btn btn-sm" onclick="toggleRule(${r.id})"
+            style="color:${r.enabled?'#f85149':'#7ee787'};border-color:${r.enabled?'#f85149':'#238636'}">
+            ${r.enabled ? '禁用' : '启用'}
+          </button>
+          <button class="btn btn-sm btn-danger" onclick="deleteRule(${r.id})">删除</button>
+        </td>
+      </tr>`;
+    }
+    html += '</table>';
+    container.innerHTML = html;
+  } catch (e) {
+    document.getElementById('rules-container').innerHTML =
+      '<div class="empty">加载失败: ' + esc(String(e)) + '</div>';
+  }
+}
+
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+function escJson(obj) {
+  return JSON.stringify(obj).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── 编辑模态框 ──
+
+function editRule(id) {
+  const rule = _rulesCache[id];
+  if (rule) openEditModal(rule);
+}
+
+function openEditModal(rule) {
+  _editRuleId = rule.id;
+  document.getElementById('edit-id').textContent = rule.id;
+  document.getElementById('e-match_type').value = rule.match_type;
+  document.getElementById('e-match_content').value = rule.match_content;
+  document.getElementById('e-slang_code').value = rule.slang_code;
+  document.getElementById('e-priority').value = rule.priority;
+  document.getElementById('e-description').value = rule.description || '';
+  document.getElementById('editModal').classList.add('show');
+}
+
+function closeEditModal() {
+  document.getElementById('editModal').classList.remove('show');
+  _editRuleId = null;
+}
+
+async function saveEdit() {
+  const body = {
+    match_type: document.getElementById('e-match_type').value,
+    match_content: document.getElementById('e-match_content').value,
+    slang_code: document.getElementById('e-slang_code').value,
+    priority: parseInt(document.getElementById('e-priority').value) || 0,
+    description: document.getElementById('e-description').value,
+  };
+  try {
+    const resp = await fetch(API + '/' + _editRuleId, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      toast('规则已更新', true);
+      closeEditModal();
+      loadRules();
+    } else {
+      toast(data.error || '保存失败', false);
+    }
+  } catch (e) {
+    toast('网络错误: ' + e, false);
+  }
+}
+
+// 点击遮罩关闭
+document.getElementById('editModal').addEventListener('click', function(e) {
+  if (e.target === this) closeEditModal();
+});
+
+// ── 增删切换 ──
+
+async function addRule() {
+  const body = {
+    match_type: document.getElementById('f-match_type').value,
+    match_content: document.getElementById('f-match_content').value,
+    slang_code: document.getElementById('f-slang_code').value,
+    priority: parseInt(document.getElementById('f-priority').value) || 0,
+    description: document.getElementById('f-description').value,
+  };
+  try {
+    const resp = await fetch(API, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await resp.json();
+    if (data.ok) {
+      toast('规则已添加 #' + data.id, true);
+      document.getElementById('f-match_content').value = '';
+      document.getElementById('f-slang_code').value = '';
+      loadRules();
+    } else {
+      toast(data.error || '添加失败', false);
+    }
+  } catch (e) {
+    toast('网络错误: ' + e, false);
+  }
+}
+
+async function deleteRule(id) {
+  if (!confirm('确认删除规则 #' + id + '？')) return;
+  try {
+    const resp = await fetch(API + '/' + id, { method: 'DELETE' });
+    const data = await resp.json();
+    if (data.ok) {
+      toast('规则已删除', true);
+      loadRules();
+    } else {
+      toast(data.error || '删除失败', false);
+    }
+  } catch (e) {
+    toast('网络错误: ' + e, false);
+  }
+}
+
+async function toggleRule(id) {
+  try {
+    const resp = await fetch(API + '/' + id + '/toggle', { method: 'PUT' });
+    const data = await resp.json();
+    if (data.ok) {
+      toast('规则已' + (data.enabled ? '启用' : '禁用'), true);
+      loadRules();
+    } else {
+      toast(data.error || '操作失败', false);
+    }
+  } catch (e) {
+    toast('网络错误: ' + e, false);
+  }
+}
+
+loadRules();
+</script>
+</body>
+</html>

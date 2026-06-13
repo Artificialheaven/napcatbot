@@ -1,0 +1,6 @@
+{
+  "cmd_prefix": "/",
+  "log_level": "info",
+  "reply_mode": "normal",
+  "welcome_msg": "👋 欢迎新成员加入群聊！"
+}

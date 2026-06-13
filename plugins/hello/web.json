@@ -1,0 +1,32 @@
+{
+    "config": {
+        "cmd_prefix": {
+            "type": "string",
+            "label": "命令前缀",
+            "default": "/"
+        },
+        "welcome_enabled": {
+            "type": "checkbox",
+            "label": "新成员欢迎",
+            "default": true
+        },
+        "welcome_msg": {
+            "type": "string",
+            "label": "欢迎语模板",
+            "default": "👋 欢迎新成员加入群聊！"
+        },
+        "reply_mode": {
+            "type": "radiobutton",
+            "label": "回复风格",
+            "default": "normal",
+            "options": ["normal", "brief", "verbose"]
+        },
+        "log_level": {
+            "type": "dropdown",
+            "label": "日志级别",
+            "default": "info",
+            "options": ["debug", "info", "warning", "error"]
+        }
+    },
+    "call_function": "load_config"
+}
